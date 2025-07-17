@@ -1,158 +1,186 @@
 import streamlit as st
-from pandas import DataFrame
+from pandas import DataFrame, Series
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
+from typing import Optional, Tuple, List, Union
 
-def display_and_close(fig):
+
+
+def pie_plot(values: Union[List[float], List[int]],labels: List[str],title: str = "Pie Chart",figsize: Tuple[int, int] = (6, 6)):
+    """
+    Plots a pie chart using the given values and labels, and optionally displays it in Streamlit.
+    Parameters:
+    - values: List of numerical data for the pie slices.
+    - labels: List of labels corresponding to each pie slice.
+    - title: Title of the pie chart (default is "Pie Chart").
+    - ax: Optional matplotlib axis to plot on. If None, a new figure is created.
+    - figsize: Tuple indicating figure size (default is (6, 6)).
+    """
+    # Create figure and axis if not provided
+    fig, ax = plt.subplots(figsize=figsize)
+    # Slightly explode all slices for emphasis
+    explode = [0.05] * len(values)
+    # Draw the pie chart
+    ax.pie(values,labels=labels,autopct='%1.1f%%',startangle=140,explode=explode,textprops={'fontsize': 14})
+    # Set title
+    ax.set_title(title, fontsize=16)
+    # Render in Streamlit
+    st.pyplot(fig)
+    plt.close(fig)  # Close the figure to free memory
+
+
+def bar_plot(df,x: str,y: str,title: str = "Bar Plot",xlabel: Optional[str] = None,ylabel: Optional[str] = None,
+             hue: Optional[str] = None,palette: str = "viridis",figsize: Tuple[int, int] = (10, 6),rotation_x: int = 45,
+             rotation_y: int = 0, legend_title=None, legend_loc=None, legend_bbox=None):
+    """
+    Plots a customizable bar plot using seaborn and matplotlib, and displays it in Streamlit.
+    Parameters:
+    - df: Pandas DataFrame containing the data.
+    - x: Column name for the x-axis.
+    - y: Column name for the y-axis.
+    - title: Title of the plot (default: 'Bar Plot').
+    - xlabel: Label for the x-axis (default: same as `x`).
+    - ylabel: Label for the y-axis (default: same as `y`).
+    - hue: Optional column name for grouping by color.
+    - palette: Color palette to use (default: 'viridis').
+    - figsize: Size of the plot (default: (10, 6)).
+    - rotation_x: Rotation angle for x-axis ticks (default: 80).
+    - rotation_y: Rotation angle for y-axis ticks (default: 0).
+    """
+    # Set default labels if not provided
+    xlabel = xlabel or x
+    ylabel = ylabel or y
+    # Create the plot
+    fig, ax = plt.subplots(figsize=figsize)
+    sns.barplot(data=df,x=x,y=y,hue=hue,palette=palette,ax=ax)
+    # Style axis ticks
+    for tick in ax.get_xticklabels():
+        tick.set_rotation(rotation_x)
+        tick.set_fontsize(11)
+    for tick in ax.get_yticklabels():
+        tick.set_rotation(rotation_y)
+        tick.set_fontsize(11)
+    # Legend handling
+    if hue and legend_title:
+        ax.legend(title=legend_title, title_fontsize=12, fontsize=10, loc=legend_loc, bbox_to_anchor=legend_bbox)
+    # Set labels and title
+    ax.set_xlabel(xlabel, fontsize=14)
+    ax.set_ylabel(ylabel, fontsize=14)
+    ax.set_title(title, fontsize=16)
+    # Adjust layout and show in Streamlit
+    plt.tight_layout()
+    st.pyplot(fig)
+
+def count_plot(df: pd.DataFrame, column: str = 'Area', xlabel: Optional[str] = None, ylabel: Optional[str] = None, 
+               title: str = "Count Plot", palette: str = 'viridis', figsize: Tuple[int, int] = (10, 6), rotation_x: int = 0,
+               rotation_y: int = 0):
+    """
+    Displays a horizontal count plot for a specified categorical column in a DataFrame.
+    Parameters:
+    - df (pd.DataFrame): The input DataFrame.
+    - column (str): The categorical column to count and plot (default: 'Area').
+    - xlabel (str, optional): Custom label for the x-axis.
+    - ylabel (str, optional): Custom label for the y-axis.
+    - title (str): Title of the plot.
+    - palette (str): Seaborn color palette.
+    - figsize (tuple): Size of the plot.
+    - rotation_x (int): Rotation angle for x-axis labels.
+    - rotation_y (int): Rotation angle for y-axis labels.
+    """
+    # Validate input column
+    xlabel = xlabel or "Frequency"
+    ylabel = ylabel or column
+
+    fig, ax = plt.subplots(figsize=figsize)
+    sns.countplot(data=df, y=column, palette=palette, ax=ax)
+    # Axis styling
+    for tick in ax.get_xticklabels():
+        tick.set_rotation(rotation_x)
+        tick.set_fontsize(12)
+    for tick in ax.get_yticklabels():
+        tick.set_rotation(rotation_y)
+        tick.set_fontsize(10)
+    # Set labels and title
+    ax.set_xlabel(xlabel, fontsize=12)
+    ax.set_ylabel(ylabel, fontsize=12)
+    ax.set_title(title, fontsize=14)
+    plt.tight_layout()
     st.pyplot(fig)
     plt.close(fig)
 
-def style_axis_ticks(ax, axis='x', rotation=None, fontsize=12):
-    if axis == 'x':
-        for tick in ax.get_xticklabels():
-            if rotation is not None: 
-                tick.set_rotation(rotation)
-            tick.set_fontsize(fontsize)
-    elif axis == 'y':
-        for tick in ax.get_yticklabels():
-            if rotation is not None:
-                tick.set_rotation(rotation)
-            tick.set_fontsize(fontsize)
+def line_plot(data: Union[Series, DataFrame], x: Optional[str] = None, y: Optional[str] = None, hue: Optional[str] = None,
+              title: str = "Line Plot", xlabel: Optional[str] = None, ylabel: Optional[str] = None, color: str = "orange",
+              marker: str = "o", linewidth: float = 2.0, figsize: Tuple[int, int] = (10, 6), grid: bool = True):
+    """
+    A flexible line plot function for Streamlit. Supports both Series and DataFrame input.
+    Parameters:
+    - data: pandas Series or DataFrame
+    - x, y: Column names (for DataFrame)
+    - hue: Optional column for color grouping (e.g., Crop)
+    - title, xlabel, ylabel: Plot labels
+    - color: Line color for Series plots or when no hue
+    - marker: Marker style
+    - linewidth: Line thickness
+    - figsize: Size of figure
+    - grid: Show gridlines
+    """
+    fig, ax = plt.subplots(figsize=figsize)
+    # Plotting logic
+    if isinstance(data, Series):
+        data.plot(ax=ax, color=color, linewidth=linewidth, marker=marker)
+        if xlabel is None: xlabel = data.index.name or "Index"
+        if ylabel is None: ylabel = "Value"
+    else:
+        sns.lineplot(data=data, x=x, y=y, hue=hue, marker=marker, linewidth=linewidth,
+                     ax=ax, palette="tab10" if hue else None, color=None if hue else color)
+        if xlabel is None: xlabel = x
+        if ylabel is None: ylabel = y
+    # Styling
+    ax.set_title(title, fontsize=17)
+    ax.set_xlabel(xlabel, fontsize=15)
+    ax.set_ylabel(ylabel, fontsize=15)
+    ax.tick_params(axis='x', labelsize=14)
+    ax.tick_params(axis='y', labelsize=14)
+    if grid:
+        ax.grid(True, linestyle='--', alpha=0.6)
+    plt.tight_layout()
+    st.pyplot(fig)
+    plt.close(fig)
 
-# Pie chart plot function
-def plot_pie_chart(values: list, labels: list, title: str, colors=plt.cm.Paired.colors, ax=None):
-    '''
-    Values: List of integers
-    labels: List of string for each element in the value
-    title: Title of the the chart/plot
-    color: Color palette to be used
-    ax: Axes 
-    '''
-    try:
-        if ax is None:
-            ax = plt.gca()
-        ax.pie(values, labels=labels, 
-            wedgeprops={'edgecolor': 'black', 'linewidth': 0.5}, 
-            textprops={'fontsize': 11, 'weight': 'roman'}, 
-            colors=colors, 
-            autopct='%1.2f%%')
-        ax.set_title(title, fontsize=15, color='darkblue')
-    except Exception as e:
-        print(f"Error in plot_pie_chart: {e}")
+def scatter_plot(df, x: str, y: str, title: str = "Scatter Plot",
+                xlabel: Optional[str] = None, ylabel: Optional[str] = None,
+                hue: Optional[str] = None, alpha: float = 0.6,
+                figsize: Tuple[int, int] = (10, 6), legend_title=None,
+                legend_loc='upper right', legend_bbox=(1.05, 1)):
+    """
+    Reusable scatter plot function for Streamlit using seaborn & matplotlib.
+    Parameters:
+    - df: Pandas DataFrame
+    - x: Column for x-axis
+    - y: Column for y-axis
+    - title: Title of the plot
+    - xlabel, ylabel: Axis labels
+    - hue: Column name for color grouping
+    - alpha: Transparency of dots
+    - figsize: Tuple for figure size
+    - legend_title: Title for the legend
+    - legend_loc: Legend location
+    - legend_bbox: BBox anchor for legend positioning
+    """
+    xlabel = xlabel or x
+    ylabel = ylabel or y
 
-# Doughnut chart plot function
-def plot_doughnut_chart(values: list, labels: list, title: str, colors=sns.color_palette("muted"), ax=None):
-    '''
-    Values: List of integers
-    labels: List of string for each element in the value
-    title: Title of the the chart/plot
-    color: Color palette to be used
-    ax: Axes 
-    '''
-    try:
-        if ax is None:
-            ax = plt.gca()
-        ax.pie(values, labels=labels, 
-            wedgeprops={'edgecolor': 'black', 'linewidth': 0.5, 'width': 0.3}, 
-            textprops={'fontsize': 11, 'weight': 'bold'}, 
-            colors=colors, 
-            startangle=90, 
-            autopct='%1.2f%%')
-        ax.set_title(title, fontsize=15, color='darkblue')
-    except Exception as e:
-        print(f"Error in plot_doughnut_chart: {e}")
-
-# Bar chart plot function
-def plot_bar_chart(data: DataFrame, x: str, y: str, title: str, hue:str=None, ax=None):
-    '''
-    x: List of integers on x axies
-    y: List of integers on y axies
-    title: Title of the the chart/plot
-    ax: Axes 
-    '''
-    try:
-        if ax is None:
-            ax = plt.gca()
-        ax.bar(
-            data=data,
-            x=x, height=y,
-            color=plt.cm.Paired(range(len(x))), 
-            edgecolor='black', 
-            hue=hue,
-            linewidth=0.8)
-        ax.set_title(title, fontsize=15, color='darkblue')
-        ax.set_xticklabels(x, rotation=60, fontsize=11)
-        ax.grid(True, axis='y', linestyle='--', linewidth=0.7, alpha=0.7)
-        for index, value in enumerate(y):
-            ax.text(x=index, y=value + 0.02 * max(y), s=f'{str(round(value, 3))}', ha='center')
-    except Exception as e:
-        print(f"Error in plot_bar_chart: {e}")
-
-# Count plot function
-def plot_count_plot(data: DataFrame, x: str, title: str, hue=None, ax=None):
-    '''
-    data: Pandas dataframe for source data
-    x: string values for x axies
-    hue: Grouping class column
-    title: Title of the the chart/plot
-    ax: Axes 
-    '''
-    try:
-        if ax is None:
-            ax = plt.gca()
-        sns.countplot(data=data, x=x, hue=hue, palette='Set2', ax=ax)
-        ax.set_title(title, fontsize=16, color='darkblue')
-        ax.set_xticklabels(ax.get_xticklabels(), rotation=45, fontsize=11, color='#34495e')
-        ax.grid(True, axis='y', linestyle='--', linewidth=0.7, alpha=0.7)
-        for container in ax.containers:
-            ax.bar_label(container)
-    except Exception as e:
-        print(f"Error in plot_count_plot: {e}")
-
-# Scatter plot function
-def plot_scatter_plot(x: list, y: list, title: str, ax=None):
-    '''
-    x: List of integers on x axies
-    y: List of integers on y axies
-    title: Title of the the chart/plot
-    ax: Axes 
-    '''
-    try:
-        if ax is None:
-            ax = plt.gca()
-        ax.scatter(x=x, y=y,
-            color=plt.cm.Paired(range(len(x))), 
-            edgecolor='black', 
-            linewidth=0.8)
-        ax.set_title(title, fontsize=15, color='darkblue')
-        ax.set_xticks(range(len(x)))
-        ax.set_xticklabels(x, rotation=60, fontsize=11)
-        ax.grid(True, axis='y', linestyle='--', linewidth=0.7, alpha=0.7)
-        for index, value in enumerate(y):
-            ax.text(x=index, y=value + 0.02 * max(y), s=f'{str(round(value, 3))}', ha='center')
-    except Exception as e:
-        print(f"Error in plot_scatter_plot: {e}")
-
-# Violin plot function
-def plot_violin_plot(data: DataFrame, x: str, title: str, hue=None, ax=None):
-    '''
-    data: Pandas dataframe for source data
-    x: string values for x axies
-    hue: Grouping class column
-    title: Title of the the chart/plot
-    ax: Axes 
-    '''
-    try:
-        if ax is None:
-            ax = plt.gca()
-        sns.violinplot(data=data, x=x, hue=hue, palette='Set2', ax=ax)
-        ax.set_title(title, fontsize=16, color='darkblue')
-        for label in ax.get_xticklabels():
-            label.set_rotation(45)
-        ax.set_xticklabels(ax.get_xticklabels(), fontsize=10)
-    except Exception as e:
-        print(f"Error in plot_violin_plot: {e}")
-
-
+    fig, ax = plt.subplots(figsize=figsize)
+    sns.scatterplot(data=df, x=x, y=y, hue=hue, alpha=alpha, ax=ax)
+    ax.set_title(title, fontsize=16)
+    ax.set_xlabel(xlabel, fontsize=15)
+    ax.set_ylabel(ylabel, fontsize=15)
+    for label in ax.get_xticklabels():
+        label.set_fontsize(13)
+    for label in ax.get_yticklabels():
+        label.set_fontsize(13)
+    if hue:
+        ax.legend(title=legend_title or hue, bbox_to_anchor=legend_bbox, loc=legend_loc, fontsize=12, title_fontsize=12)
+    st.pyplot(fig)

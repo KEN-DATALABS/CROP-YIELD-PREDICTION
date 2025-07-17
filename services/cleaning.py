@@ -37,11 +37,12 @@ class Cleaning:
                 self.df[cat_cols] = cat_imputer.fit_transform(self.df[cat_cols])
             
     def rename(self):
-        if 'Items' in self.df.columns:
-            # Change Items to Crop
-            self.df.rename(columns={'Item':'Crop'}, inplace=True)
-        # Rename all columns to lowercase with underscores (standard format)
-        self.df.columns = self.df.columns.str.strip().str.replace(" ", "_").str.capitalize()
+        # Correct typo: 'Item' not 'Items'
+        if 'Item' in self.df.columns:
+            self.df.rename(columns={'Item': 'Crop'}, inplace=True)
+        # Normalize column names
+        self.df.columns = (self.df.columns.str.strip().str.replace(" ", "_", regex=False).str.capitalize())
+        self.issues.append("Column names normalized and 'Item' renamed to 'Crop'")
 
 
     def handle_duplicates(self):

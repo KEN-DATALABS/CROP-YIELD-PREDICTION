@@ -184,3 +184,108 @@ def scatter_plot(df, x: str, y: str, title: str = "Scatter Plot",
     if hue:
         ax.legend(title=legend_title or hue, bbox_to_anchor=legend_bbox, loc=legend_loc, fontsize=12, title_fontsize=12)
     st.pyplot(fig)
+
+
+# Define visualization functions
+def plot_model_performance(y_true, y_pred, model_name='Model'):
+    """
+    Create three plots for model performance evaluation
+    """
+    fig, axes = plt.subplots(3, 1, figsize=(7, 15))
+    
+    # Calculate residuals
+    residuals = y_true - y_pred
+    
+    # 1. Actual vs Predicted plot
+    sns.scatterplot(x=y_true, y=y_pred, alpha=0.6, ax=axes[0])
+    axes[0].plot([y_true.min(), y_true.max()], [y_true.min(), y_true.max()], 'r--')
+    axes[0].set_xlabel('Actual Values', fontsize=13)
+    axes[0].set_ylabel('Predicted Values', fontsize=13)
+    axes[0].set_title(f'{model_name} - Actual vs Predicted Values', fontsize=14)
+    
+    # 2. Residuals plot
+    sns.histplot(residuals, bins=30, kde=True, color='orange', ax=axes[1])
+    axes[1].set_xlabel('Residuals (Actual - Predicted)', fontsize=13)
+    axes[1].set_title(f'{model_name} - Distribution of Residuals', fontsize=14)
+    
+    # 3. Prediction error distribution (KDE)
+    sns.kdeplot(y_pred, label='Predicted', fill=True, ax=axes[2])
+    sns.kdeplot(y_true, label='Actual', fill=True, ax=axes[2])
+    axes[2].set_title(f'{model_name} - Prediction vs Actual Distribution', fontsize=14)
+    axes[2].set_xlabel('Yield', fontsize=13)
+    axes[2].legend()
+    
+    plt.tight_layout()
+    return fig
+
+def plot_feature_importance(model, feature_names, model_name):
+    """Plot feature importance for tree-based models"""
+    fig, ax = plt.subplots(figsize=(10, 8))
+    importances = model.feature_importances_
+    indices = np.argsort(importances)[::-1]
+    
+    ax.barh(range(len(indices)), importances[indices], align='center')
+    ax.set_yticks(range(len(indices)))
+    ax.set_yticklabels([feature_names[i] for i in indices])
+    ax.set_xlabel('Feature Importance', fontsize=14)
+    ax.set_title(f'{model_name} - Feature Importance', fontsize=16)
+    ax.tick_params(axis='both', which='major', labelsize=12)
+    
+    plt.tight_layout()
+    return fig
+
+def add_bar_labels(ax, fmt="{:.2f}"):
+    """Add value labels on bars"""
+    for p in ax.patches:
+        ax.annotate(fmt.format(p.get_height()), 
+                   (p.get_x() + p.get_width() / 2., p.get_height()),
+                   ha='center', va='center', 
+                   xytext=(0, 9), 
+                   textcoords='offset points',
+                   fontsize=12)
+
+
+def plot_metric_comparison(results_df, metric_col, title, ylabel, palette='viridis'):
+    """Plot metric comparison across models"""
+    fig, ax = plt.subplots(figsize=(12, 7))
+    sns.barplot(x='Model', y=metric_col, data=results_df, palette=palette, ax=ax)
+    add_bar_labels(ax, fmt="{:.2f}" if "%" not in ylabel else "{:.2f}%")
+    ax.set_title(title, fontsize=18)
+    ax.set_ylabel(ylabel, fontsize=18)
+    ax.set_xlabel('Model', fontsize=18)
+    ax.tick_params(axis='x', labelsize=16)
+    ax.tick_params(axis='y', labelsize=16)
+    
+    if "Improvement" in title or "Reduction" in title:
+        ax.axhline(0, color='black', linestyle='--')
+    
+    plt.tight_layout()
+    return fig
+
+def plot_before_after_comparison(results_df, before_col, after_col, title, ylabel, palette=['lightblue', 'salmon']):
+    """Plot before/after comparison for metrics"""
+    # Prepare data
+    comparison_data = []
+    for _, row in results_df.iterrows():
+        comparison_data.append({'Model': row['Model'], 'Type': 'Before', 'Value': row[before_col]})
+        comparison_data.append({'Model': row['Model'], 'Type': 'After', 'Value': row[after_col]})
+    
+    comparison_df = pd.DataFrame(comparison_data)
+    
+    fig, ax = plt.subplots(figsize=(12, 8))
+    sns.barplot(x='Model', y='Value', hue='Type', data=comparison_df, palette=palette, ax=ax)
+    
+    add_bar_labels(ax, fmt="{:.2f}" if "MAE" in ylabel else "{:.4f}" if "R²" in ylabel else "{:.2f}%")
+    ax.set_title(title, fontsize=18)
+    ax.set_ylabel(ylabel, fontsize=18)
+    ax.set_xlabel('Model', fontsize=18)
+    ax.tick_params(axis='x', labelsize=16)
+    ax.tick_params(axis='y', labelsize=16)
+    ax.legend(title='Transfer Setting', fontsize=13, title_fontsize=14)
+    
+    if "R²" in ylabel:
+        ax.set_ylim(0, 1.0)
+    
+    plt.grid(axis='y', linestyle='--', alpha=0.3)
+    plt.tight_layout()
+    return fig

@@ -2,12 +2,15 @@ import streamlit as st
 import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
+import joblib
 
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder, StandardScaler
-from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import classification_report, accuracy_score
+from sklearn.metrics import r2_score, mean_absolute_error, mean_absolute_percentage_error
 
+from sklearn.ensemble import RandomForestRegressor
+from xgboost import XGBRegressor
 
 from helpers.read_data import upload_dataset, load_dataset
 from const.features import expected_columns, sidenav
@@ -15,11 +18,12 @@ from const.markdowns import welcome_note, area_distribution_insight
 from helpers.verify_columns import verify
 from services.eda import EDA
 from services.cleaning import Cleaning
-
+from services.processing import encode_categorical, find_high_correlation_pairs, drop_highly_correlated_features, process_data
 from services.visualisation import pie_plot, bar_plot, count_plot, line_plot, scatter_plot
+from services.visualisation import plot_model_performance, plot_feature_importance, add_bar_labels, plot_metric_comparison, plot_before_after_comparison
+from services.modelling import run_all_transfer_experiments
 
 dataset_url = "https://raw.githubusercontent.com/datasciencedojo/datasets/master/Agricultural%20Production.csv"
-
 
 # Set up Streamlit layout to use full screen width
 st.set_page_config(layout="wide")
@@ -35,11 +39,11 @@ st.sidebar.title("Navigation")
 options = st.sidebar.radio("Select Step:", sidenav)
 
 # Initialize Streamlit session state variables to persist data across steps
-for key in ['df', 'cleaned_df', 'target', 'model_type', 'model', 'report']:
+states= ['df', 'cleaned_df', 'target', 'data_splits', 'source_models', 'transfer_results', 'transfer_models','preprocessors']
+for key in states:
     if key not in st.session_state:
         st.session_state[key] = None
 
-# Define the required columns expected in the uploaded dataset
 
 
 # Step 1: Upload or Load Dataset
@@ -67,8 +71,7 @@ if options == "Upload Data":
             label="Download Example Dataset",
             data=pd.DataFrame(columns=expected_columns).to_csv(index=False),
             file_name='example_crop_data.csv',
-            mime='text/csv'
-        )
+            mime='text/csv')
 
     # Proceed only if dataset is loaded and verified
     if df is not None and (df := verify(df)) is not None:
@@ -90,7 +93,6 @@ elif options == "Data Cleaning":
         # Load original dataset
         original_df = st.session_state.df
         cleaned_df = original_df.copy()
-
         # Perform cleaning
         cleaning = Cleaning(cleaned_df)
         cleaning.handle_cleandata()
@@ -98,7 +100,6 @@ elif options == "Data Cleaning":
 
         # Get cleaned result from the class (important!)
         cleaned_df = cleaning.df
-
         st.success("Data cleaning completed successfully!")
 
         # Display comparison
@@ -288,11 +289,10 @@ elif options == "Visualization":
             selected_crop = st.selectbox("Select a Crop", sorted(df['Crop'].unique()))
             df_crop = df[df['Crop'] == selected_crop]
             
-            crop_metrics = {
-                'Hg/ha_yield': ('Yield (hg/ha)', 'blue'),
-                'Pesticides_tonnes': ('Pesticides (tonnes)', 'black'),
-                'Average_rain_fall_mm_per_year': ('Rainfall (mm)', 'red'),
-                'Avg_temp': ('Avg Temperature (°C)', 'orange')}
+            crop_metrics = {'Hg/ha_yield': ('Yield (hg/ha)', 'blue'),
+                            'Pesticides_tonnes': ('Pesticides (tonnes)', 'black'),
+                            'Average_rain_fall_mm_per_year': ('Rainfall (mm)', 'red'),
+                            'Avg_temp': ('Avg Temperature (°C)', 'orange')}
             # Get list of metric items
             metric_items = list(crop_metrics.items())
             # Loop through metrics in pairs of 2 to make 2 columns per row
@@ -310,7 +310,6 @@ elif options == "Visualization":
 
         with st.expander("Crop Yield Insights (Max & Total Yield)"):
             col1, col2 = st.columns(2)
-
             # Column 1: Maximum Yield per Crop by Area
             with col1:
                 st.markdown("### Maximum Yield per Crop by Area")
@@ -442,161 +441,439 @@ elif options == "Visualization":
 elif options == "Visualization" and st.session_state.cleaned_df is None:
     st.warning("Please clean your data first in the 'Data Cleaning' section.")
 
-# # STEP 4: Preprocessing
-# elif options == "Preprocessing":
-#     st.header("Data Preprocessing")
 
-#     # Ensure the cleaned dataframe exists in session state
-#     if st.session_state.cleaned_df is not None:
-#         df = st.session_state.cleaned_df.copy()
+# --- Preprocessing Section ---
+elif options == "Preprocessing":
+    st.header("Data Preprocessing")
+    
+    if st.session_state.cleaned_df is not None:
+        df = st.session_state.cleaned_df.copy()
+        
+        try:
+            # Encode categorical features
+            st.subheader("Encoding Categorical Features")
+            categorical_columns = ['Area', 'Crop']
+            label_encoder_area = LabelEncoder()
+            label_encoder_crop = LabelEncoder()
+            df['Area'] = label_encoder_area.fit_transform(df['Area'])
+            df['Crop'] = label_encoder_crop.fit_transform(df['Crop'])
+            st.session_state.preprocessors = {
+                'label_encoder_area': label_encoder_area,
+                'label_encoder_crop': label_encoder_crop}
+            
+            st.success("Categorical features encoded successfully!")
+            st.dataframe(df.head())
+            
+            # Correlation Analysis
+            st.subheader("Correlation Analysis")
+            correlation_matrix = df.corr()
+            fig, ax = plt.subplots(figsize=(7, 7))
+            sns.heatmap(correlation_matrix, annot=True, cmap='coolwarm', fmt='.2f', linewidths=0.5, ax=ax)
+            ax.set_title('Heatmap of Correlation Matrix', fontsize=18)
+            st.pyplot(fig)
+            
+            high_corr_columns = find_high_correlation_pairs(correlation_matrix, threshold=0.5)
+            st.subheader("Highly Correlated Feature Pairs ≥ ±0.5")
+            if high_corr_columns:
+                for col1, col2, corr_val in high_corr_columns:
+                    st.write(f"Correlation between `{col1}` and `{col2}` is `{corr_val:.2f}`")
+            else:
+                st.info("No highly correlated feature pairs found.")
+            
+            df, dropped_cols = drop_highly_correlated_features(df, correlation_matrix, threshold=0.5)
+            if dropped_cols:
+                st.subheader("Dropped Highly Correlated Columns")
+                st.write(f"Columns dropped due to high correlation (>|0.5|): `{', '.join(dropped_cols)}`")
+            else:
+                st.info("No highly correlated features were dropped.")
+            
+            # Target and Feature Separation
+            st.subheader("Target and Feature Separation")
+            if 'Hg/ha_yield' in df.columns:
+                st.write("Target Column Selected: `'Hg/ha_yield'`")
+                X = df.drop('Hg/ha_yield', axis=1)
+                Y = df['Hg/ha_yield']
+                st.session_state.target = Y
+                st.write("Feature Columns:")
+                st.write(X.columns)
+            else:
+                st.error("Target column `'Hg/ha_yield'` not found. Please check your dataset.")
+                st.stop()
+            
+            # Scale features and create splits
+            numerical_columns = ['Average_rain_fall_mm_per_year', 'Pesticides_tonnes', 'Avg_temp', 'Year']
+            st.write("Processing data splits...")
+            try:
+                splits = process_data(X, Y, numerical_columns)
+            except Exception as e:
+                st.error(f"Error in process_data: {e}")
+                st.stop()
+            
+            # Validate splits
+            if not splits:
+                st.error("No splits created. Check your data and preprocessing steps.")
+                st.stop()
+            for split_name in ['seen', 'unseen_countries', 'unseen_crops', 'unseen_both']:
+                if split_name not in splits:
+                    st.error(f"Split '{split_name}' missing. Check process_data implementation.")
+                    st.stop()
+                if not len(splits[split_name]['X_train']) or not len(splits[split_name]['X_test']):
+                    st.error(f"Split '{split_name}' has empty train or test set. Check data distribution (e.g., Year range).")
+                    st.stop()
+                if 'scaler' not in splits[split_name]:
+                    st.error(f"Scaler missing in split '{split_name}'. Check scale_features_and_create_weights.")
+                    st.stop()
+            if 'transfer_learning' not in splits or not len(splits['transfer_learning']['X_adapt']):
+                st.error("Transfer learning split missing or empty. Check prepare_transfer_learning_data.")
+                st.stop()
+            
+            # Store splits and update preprocessors
+            st.session_state.data_splits = splits
+            st.session_state.preprocessors['scaler'] = splits['seen']['scaler']
+            
+            # Save preprocessors to disk
+            joblib.dump(st.session_state.preprocessors['label_encoder_area'], 'label_encoder_area.pkl')
+            joblib.dump(st.session_state.preprocessors['label_encoder_crop'], 'label_encoder_crop.pkl')
+            joblib.dump(st.session_state.preprocessors['scaler'], 'scaler.pkl')
+            
+            # Display split information
+            st.subheader("Data Splits Created")
+            for split_name, data in splits.items():
+                if split_name != 'transfer_learning':
+                    st.write(f"**{split_name}**: Train size: {len(data['X_train'])}, Test size: {len(data['X_test'])}")
+                else:
+                    st.write(f"**{split_name}**: Adaptation size: {len(data['X_adapt'])}, Final test size: {len(data['X_test_unseen_final'])}")
+            
+            st.success("Data processing complete! All splits and preprocessors saved.")
+        
+        except Exception as e:
+            st.error(f"Error in preprocessing: {e}")
+            st.write("Please check your data and try again.")
+            st.stop()
+    
+    else:
+        st.warning("Please upload and clean your data first in the 'Upload Data' section.")
+        st.stop()
+                
+# --- Modeling Section ---
+elif options == "Modeling":
+    st.subheader("Model Training and Transfer Learning")
+    
+    if 'data_splits' not in st.session_state or not st.session_state.data_splits:
+        st.warning("Please process data first in the Preprocessing section.")
+        st.stop()
+    
+    # Get data splits
+    try:
+        splits = st.session_state.data_splits
+        X_train_final = splits['unseen_countries']['X_train']
+        y_train_final = splits['unseen_countries']['y_train']
+        sample_weights1 = splits['unseen_countries']['sample_weights']
+        X_test_unseen = splits['unseen_countries']['X_test']
+        y_test_unseen = splits['unseen_countries']['y_test']
+        X_adapt = splits['transfer_learning']['X_adapt']
+        y_adapt = splits['transfer_learning']['y_adapt']
+        X_test_unseen_final = splits['transfer_learning']['X_test_unseen_final']
+        y_test_unseen_final = splits['transfer_learning']['y_test_unseen_final']
+    except KeyError:
+        st.error("Data splits are incomplete. Please reprocess data in the Preprocessing section.")
+        st.stop()
+    
+    # Display data info
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("Training Samples", len(X_train_final))
+    with col2:
+        st.metric("Adaptation Samples", len(X_adapt))
+    with col3:
+        st.metric("Test Samples", len(X_test_unseen_final))
+    
+    # Model parameters
+    st.subheader("Model Parameters")
+    
+    rf_params = {
+        'n_estimators': 50,
+        'max_depth': 10,
+        'min_samples_split': 2,
+        'random_state': 42}
+    
+    xgb_params = {
+        'n_estimators': 50,
+        'max_depth': 6,
+        'learning_rate': 0.5,
+        'random_state': 42}
+    
+    st.write("**Random Forest Parameters**")
+    st.write(f"- n_estimators: {rf_params['n_estimators']}")
+    st.write(f"- max_depth: {rf_params['max_depth']}")
+    st.write(f"- min_samples_split: {rf_params['min_samples_split']}")
+    st.write("**XGBoost Parameters**")
+    st.write(f"- n_estimators: {xgb_params['n_estimators']}")
+    st.write(f"- max_depth: {xgb_params['max_depth']}")
+    st.write(f"- learning_rate: {xgb_params['learning_rate']}")
+    
+    # Try loading source models
+    source_models = {}
+    try:
+        source_models['Random Forest'] = joblib.load('rf_model.pkl')
+        source_models['XGBoost'] = joblib.load('xgb_model.pkl')
+        st.session_state.source_models = source_models
+        st.info("Loaded pre-trained source models from disk.")
+    except FileNotFoundError:
+        st.warning("Source model files not found. Please train models below.")
+    
+    # Train source models
+    if st.button("Train Source Models", type="primary"):
+        st.info("Training source models with best parameters...")
+        
+        # Train Random Forest
+        st.write("Training Random Forest...")
+        rf_model = RandomForestRegressor(**rf_params)
+        rf_model.fit(X_train_final, y_train_final, sample_weight=sample_weights1)
+        source_models['Random Forest'] = rf_model
+        joblib.dump(rf_model, 'rf_model.pkl')
+        st.success("Random Forest trained and saved successfully!")
+        
+        # Train XGBoost
+        st.write("Training XGBoost...")
+        xgb_model = XGBRegressor(**xgb_params)
+        xgb_model.fit(X_train_final, y_train_final, sample_weight=sample_weights1)
+        source_models['XGBoost'] = xgb_model
+        joblib.dump(xgb_model, 'xgb_model.pkl')
+        st.success("XGBoost trained and saved successfully!")
+        
+        # Store source models
+        st.session_state.source_models = source_models
+        st.success("All models trained and saved successfully!")
+        
+        # Show source model performance
+        st.subheader("Source Model Performance")
+        for model_name, model in source_models.items():
+            y_pred = model.predict(X_test_unseen)
+            r2 = r2_score(y_test_unseen, y_pred)
+            mae = mean_absolute_error(y_test_unseen, y_pred)
+            mape = mean_absolute_percentage_error(y_test_unseen, y_pred) * 100
+            st.write(f"**{model_name}**: R² = {r2:.4f}, MAE = {mae:.2f}, MAPE = {mape:.2f}%")
+    
+    # Run transfer learning experiments
+    if 'source_models' in st.session_state and st.session_state.source_models:
+        st.subheader("Transfer Learning Experiments")
+        if st.button("Run Transfer Learning Experiments", type="primary"):
+            st.info("Running transfer learning experiments. This may take a while...")
+            
+            models_config = [
+                ('Random Forest', source_models['Random Forest'], RandomForestRegressor(**rf_params)),
+                ('XGBoost', source_models['XGBoost'], XGBRegressor(**xgb_params))]
+            
+            results_df, transfer_models = run_all_transfer_experiments(
+                models_config, 
+                X_train_final, y_train_final, 
+                X_adapt, y_adapt, 
+                X_test_unseen, y_test_unseen,
+                X_test_unseen_final, y_test_unseen_final, 
+                sample_weights1)
+            
+            # Save transfer models
+            for model_name, model in transfer_models.items():
+                joblib.dump(model, f'transfer_{model_name.lower().replace(" ", "_")}_model.pkl')
+            
+            # Store results and models
+            st.session_state.transfer_results = results_df
+            st.session_state.transfer_models = transfer_models
+            
+            # Display results
+            st.subheader("Transfer Learning Results")
+            st.dataframe(results_df.style.format({
+                'No Transfer R²': '{:.4f}',
+                'Transfer R²': '{:.4f}',
+                'R² Improvement (pp)': '{:.2f}',
+                'R² Improvement (%)': '{:.2f}',
+                'No Transfer MAE': '{:.2f}',
+                'Transfer MAE': '{:.2f}',
+                'MAE Improvement': '{:.2f}',
+                'MAE Reduction (%)': '{:.2f}',
+                'No Transfer MAPE (%)': '{:.2f}',
+                'Transfer MAPE (%)': '{:.2f}',
+                'MAPE Improvement (%)': '{:.2f}',
+                'MAPE Reduction (%)': '{:.2f}'}))
+            
+            # Show best model
+            best_model_idx = results_df['Transfer R²'].idxmax()
+            best_model = results_df.loc[best_model_idx, 'Model']
+            st.success(f"Best performing model: {best_model} (R²: {results_df.loc[best_model_idx, 'Transfer R²']:.4f})")
+            
+            # Visualizations
+            with st.expander("Model Performance Visualizations", expanded=True):
+                st.subheader("Model Performance Comparison")
+                fig_r2_improvement = plot_metric_comparison(
+                    results_df, 'R² Improvement (%)', 
+                    'Percentage R² Improvement from Transfer Learning', 
+                    'R² Improvement (%)', 'viridis')
+                st.pyplot(fig_r2_improvement)
+                
+                fig_mae_reduction = plot_metric_comparison(
+                    results_df, 'MAE Reduction (%)', 
+                    'Percentage MAE Reduction from Transfer Learning', 
+                    'MAE Reduction (%)', 'viridis')
+                st.pyplot(fig_mae_reduction)
+                
+                fig_mape_reduction = plot_metric_comparison(
+                    results_df, 'MAPE Reduction (%)', 
+                    'Percentage MAPE Reduction from Transfer Learning', 
+                    'MAPE Reduction (%)', 'viridis')
+                st.pyplot(fig_mape_reduction)
+                
+                st.subheader("Before and After Transfer Learning")
+                fig_r2_comparison = plot_before_after_comparison(
+                    results_df, 'No Transfer R²', 'Transfer R²',
+                    'R² Comparison: Transfer Learning vs No Transfer',
+                    'R² Score')
+                st.pyplot(fig_r2_comparison)
+                
+                fig_mae_comparison = plot_before_after_comparison(
+                    results_df, 'No Transfer MAE', 'Transfer MAE',
+                    'MAE Comparison: Transfer Learning vs No Transfer',
+                    'MAE')
+                st.pyplot(fig_mae_comparison)
+                
+                fig_mape_comparison = plot_before_after_comparison(
+                    results_df, 'No Transfer MAPE (%)', 'Transfer MAPE (%)',
+                    'MAPE Comparison: Transfer Learning vs No Transfer',
+                    'MAPE (%)')
+                st.pyplot(fig_mape_comparison)
+            
+            # Feature Importance
+            with st.expander("Feature Importance Analysis", expanded=False):
+                st.subheader("Feature Importance")
+                feature_names = X_train_final.columns.tolist() + ['source_pred']
+                for model_name in transfer_models:
+                    fig_importance = plot_feature_importance(
+                        transfer_models[model_name], feature_names, model_name)
+                    st.pyplot(fig_importance)
+            
+            # Individual Model Performance
+            with st.expander("Individual Model Performance", expanded=False):
+                st.subheader("Detailed Model Performance")
+                for model_name in transfer_models:
+                    X_test_transfer = X_test_unseen_final.copy()
+                    source_model = source_models[model_name]
+                    X_test_transfer['source_pred'] = source_model.predict(X_test_unseen_final)
+                    y_pred = transfer_models[model_name].predict(X_test_transfer)
+                    fig_performance = plot_model_performance(
+                        y_test_unseen_final, y_pred, model_name)
+                    st.pyplot(fig_performance)
+            
+            # Download results
+            csv = results_df.to_csv(index=False)
+            st.download_button(
+                label="Download Results as CSV",
+                data=csv,
+                file_name="transfer_learning_results.csv",
+                mime="text/csv")
+    else:
+        st.error("No source models found. Please train source models first.")
 
-
-#         st.subheader("Encoding Categorical Features")
-#         # Function to encode categorical features using LabelEncoder
-#         def encode_categorical(dataframe, columns):
-#             encoder = LabelEncoder()
-#             for col in columns:
-#                 dataframe[col] = encoder.fit_transform(dataframe[col])
-#             return dataframe
-
-#         # Identify categorical columns
-#         categorical_columns = df.select_dtypes(include="object").columns.tolist()
-
-#         # Encode them
-#         df = encode_categorical(df, categorical_columns)
-#         st.success("Categorical features encoded successfully!")
-#         st.dataframe(df.head())
-
-
-#         st.subheader("Correlation Analysis")
-#         # Compute correlation matrix
-#         correlation_matrix = df.corr()
-#         # Visualize correlation matrix
-#         fig, ax = plt.subplots(figsize=(8, 8))
-#         sns.heatmap(correlation_matrix, annot=True, cmap='coolwarm', fmt='.2f', linewidths=0.5, ax=ax)
-#         ax.set_title('Heatmap of Correlation Matrix', fontsize=18)
-#         st.pyplot(fig)
-
-#         # Function to find highly correlated feature pairs above a threshold
-#         def find_high_correlation_pairs(corr_matrix, threshold=0.5):
-#             corr_pairs = []
-#             columns = corr_matrix.columns
-#             for i in range(len(columns)):
-#                 for j in range(i + 1, len(columns)):
-#                     value = corr_matrix.iloc[i, j]
-#                     if abs(value) >= threshold:
-#                         corr_pairs.append((columns[i], columns[j], value))
-#             return corr_pairs
-
-#         # Check for highly correlated feature pairs (above or below ±0.5)
-#         high_corr_columns = find_high_correlation_pairs(df.corr(), threshold=0.5)
-#         st.subheader("Highly Correlated Feature Pairs ≥ ±0.5)")
-
-#         if high_corr_columns:
-#             for col1, col2, corr_val in high_corr_columns:
-#                 st.write(f"Correlation between `{col1}` and `{col2}` is `{corr_val:.2f}`")
-#         else:
-#             st.info("No highly correlated feature pairs found.")
-
-#         # Function to drop one column from each highly correlated pair
-#         def drop_highly_correlated_features(dataframe, corr_matrix, threshold=0.5):
-#             to_drop = set()
-#             for i in range(len(corr_matrix.columns)):
-#                 for j in range(i + 1, len(corr_matrix.columns)):
-#                     col1 = corr_matrix.columns[i]
-#                     col2 = corr_matrix.columns[j]
-#                     if abs(corr_matrix.iloc[i, j]) > threshold:
-#                         # Drop the second column in the pair
-#                         to_drop.add(col2)
-#             dataframe = dataframe.drop(columns=list(to_drop))
-#             return dataframe, list(to_drop)
-
-#         # Drop correlated features
-#         df, dropped_cols = drop_highly_correlated_features(df, correlation_matrix, threshold=0.5)
-
-#         # Display dropped columns if any
-#         if dropped_cols:
-#             st.subheader("Dropped Highly Correlated Columns")
-#             st.write(f"Columns dropped due to high correlation (>|0.5|): `{', '.join(dropped_cols)}`")
-#         else:
-#             st.info("No highly correlated features were dropped.")
-
-#         st.subheader("Target and Feature Separation")
-#         # Ensure target column exists
-#         if 'Hg/ha_yield' in df.columns:
-#             st.write("Target Column Selected: `'Hg/ha_yield'`")
-
-#             # Split into features and target
-#             X = df.drop('Hg/ha_yield', axis=1)
-#             Y = df['Hg/ha_yield']
-
-#             st.write("Feature Columns:")
-#             st.write(X.columns)
-#         else:
-#             st.error("Target column `'Hg/ha_yield'` not found. Please check your dataset.")
-#             st.stop()
-
-
-#         st.subheader("Feature Scaling (Standard Normalization)")
-#          # Function to normalize features
-#         def normalize_features(features):
-#             scaler = StandardScaler()
-#             scaled = scaler.fit_transform(features)
-#             return pd.DataFrame(scaled, columns=features.columns)
-
-#         # Apply normalization
-#         X = normalize_features(X)
-#         st.success("Features normalized successfully!")
-
-#         # Store processed features and target in session state
-#         st.session_state.X_processed = X
-#         st.session_state.Y_processed = Y
-
-#         st.success("Data preprocessing complete!")
-
-#     else:
-#         # Data not available warning
-#         st.warning("Please upload a dataset first in the 'Upload Data' section.")
-
-# # Fallback: Prevents error if accessed before cleaning
-# elif options == "Preprocessing" and st.session_state.cleaned_df is None:
-#     st.warning("Please clean your data first in the 'Data Cleaning' section.")
-
-
-
-# # STEP 5: Model Training
-# st.subheader("🤖 Model Development")
-
-# test_size = st.slider("Select test size", 0.1, 0.5, 0.2)
-# random_state = st.number_input("Random state (for reproducibility)", value=42)
-
-# X_train, X_test, y_train, y_test = train_test_split(X_scaled, y, test_size=test_size, random_state=int(random_state))
-
-# model = RandomForestClassifier()
-# model.fit(X_train, y_train)
-
-# y_pred = model.predict(X_test)
-
-# # STEP 6: Evaluation
-# st.subheader("📋 Model Evaluation")
-# st.write("Accuracy:", accuracy_score(y_test, y_pred))
-# st.text("Classification Report:")
-# st.text(classification_report(y_test, y_pred))
-
-# # Predict with user input
-# st.subheader("📝 Make a Prediction")
-# input_data = {}
-# for col in df.drop(columns=[target_col]).columns:
-#     value = st.text_input(f"Enter value for {col}")
-#     input_data[col] = value
-
-# if st.button("Predict"):
-#     input_df = pd.DataFrame([input_data])
-
-#     for col in input_df.columns:
-#         if input_df[col].dtype == 'object':
-#             input_df[col] = LabelEncoder().fit(df[col]).transform(input_df[col])
-
-#     input_df_scaled = scaler.transform(input_df)
-#     prediction = model.predict(input_df_scaled)
-# st.success(f"🎉 Predicted class: {prediction[0]}")
+# --- Prediction Section ---
+elif options == "Prediction":
+    st.subheader("Crop Yield Prediction")
+    
+    if st.session_state.preprocessors is None or not st.session_state.preprocessors:
+        st.warning("Please process data first in the Preprocessing section to initialize preprocessors.")
+        st.stop()
+    
+    # Load transfer models
+    transfer_models = {}
+    try:
+        transfer_models['Random Forest'] = joblib.load('transfer_random_forest_model.pkl')
+        transfer_models['XGBoost'] = joblib.load('transfer_xgboost_model.pkl')
+        st.info("Loaded pre-trained transfer models from disk.")
+    except FileNotFoundError:
+        st.warning("Transfer models not found. Please run transfer learning experiments in the Modeling section.")
+        st.stop()
+    
+    # Load preprocessors
+    label_encoder_area = st.session_state.preprocessors['label_encoder_area']
+    label_encoder_crop = st.session_state.preprocessors['label_encoder_crop']
+    scaler = st.session_state.preprocessors['scaler']
+    
+    # Display model performance (placeholders, update with actual results)
+    st.header("Model Performance Metrics (Transfer Learning)")
+    col1, col2 = st.columns(2)
+  
+    with col1:
+        st.subheader("Random Forest")
+        st.write("Transfer R²: 0.9256")
+        st.write("Transfer MAE: 14113.68")
+        st.write("Transfer MAPE: 44.55%")
+    with col2:
+        st.subheader("XGBoost")
+        st.write("Transfer R²: 0.9250")
+        st.write("Transfer MAE: 13226.37")
+        st.write("Transfer MAPE: 27.31%")
+    
+    # File upload for predictions
+    uploaded_file = st.file_uploader("Upload CSV file for prediction", type="csv")
+    
+    if uploaded_file:
+        try:
+            df = pd.read_csv(uploaded_file)
+            required_columns = ['Area', 'Crop', 'Year', 'Average_rain_fall_mm_per_year', 'Pesticides_tonnes', 'Avg_temp']
+            if not all(col in df.columns for col in required_columns):
+                st.error(f"CSV must contain columns: {', '.join(required_columns)}")
+                st.stop()
+            
+            st.write("Uploaded data preview:")
+            st.dataframe(df.head())
+            
+            # Preprocess data
+            df_encoded = df.copy()
+            try:
+                df_encoded['Area'] = label_encoder_area.transform(df_encoded['Area'])
+                df_encoded['Crop'] = label_encoder_crop.transform(df_encoded['Crop'])
+            except ValueError:
+                st.error("Uploaded data contains unseen Area or Crop values. Ensure values match training data.")
+                st.stop()
+            
+            numerical_columns = ['Average_rain_fall_mm_per_year', 'Pesticides_tonnes', 'Avg_temp', 'Year']
+            df_encoded[numerical_columns] = scaler.transform(df_encoded[numerical_columns])
+            
+            # Add source predictions for transfer learning
+            source_models = st.session_state.source_models if 'source_models' in st.session_state else {}
+            if not source_models:
+                try:
+                    source_models['Random Forest'] = joblib.load('rf_model.pkl')
+                    source_models['XGBoost'] = joblib.load('xgb_model.pkl')
+                    st.session_state.source_models = source_models
+                except FileNotFoundError:
+                    st.error("Source models not found. Please train source models in the Modeling section.")
+                    st.stop()
+            
+            X = df_encoded[required_columns]
+            predictions = {}
+            for model_name in transfer_models:
+                X_transfer = X.copy()
+                X_transfer['source_pred'] = source_models[model_name].predict(X)
+                predictions[model_name] = transfer_models[model_name].predict(X_transfer)
+            
+            # Add predictions to dataframe
+            df['RF_Predicted_Yield'] = predictions['Random Forest']
+            df['XGB_Predicted_Yield'] = predictions['XGBoost']
+            
+            # Display predictions
+            st.header("Predictions")
+            st.write("Predicted crop yields (hg/ha):")
+            st.dataframe(df[['Area', 'Crop', 'Year','RF_Predicted_Yield', 'XGB_Predicted_Yield']])
+            
+            # Download predictions
+            csv = df.to_csv(index=False)
+            st.download_button(
+                label="Download Predictions as CSV",
+                data=csv,
+                file_name="crop_yield_predictions.csv",
+                mime="text/csv")
+        
+        except Exception as e:
+            st.error(f"Error processing data or making predictions: {e}")
+    
+    else:
+        st.info("Please upload a CSV file to make predictions.")

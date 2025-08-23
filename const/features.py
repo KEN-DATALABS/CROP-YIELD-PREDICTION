@@ -3,5 +3,5 @@ expected_columns = ["Area", "Item", "Year", "hg/ha_yield",
                     "avg_temp"]
 
 sidenav = ["Upload Data", "Data Cleaning", 
-            "Visualization", "Preprocessing",
-            "Prediction", "Insights"]
+            "Visualization", "Preprocessing", "Modeling",
+            "Prediction"]
